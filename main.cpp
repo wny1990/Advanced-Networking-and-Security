@@ -6,27 +6,6 @@
 #include <netinet/ip.h>
 #include <net/if.h>
 #include <netinet/if_ether.h>
-
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <stdint.h>
-#include <stddef.h>
-#include <time.h>
-#include <stdbool.h>
-#include <errno.h>
-#include <ctype.h>
-
-#include <signal.h>
-#include <sys/syscall.h>    
-
-#include <sys/time.h>
-#include <sys/resource.h>
-#include <sys/wait.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-
 #include <pcap.h>
 
 #include <map>
@@ -37,6 +16,39 @@
 using namespace std;
 map<pair<int,int>,string> in_flow;
 map<pair<int,int>,string> out_flow;
+//convert the ip address to a readable string
+string ip_to_string(int ip)
+{
+	char s[20] ="";
+	string result = "";
+	
+	sprintf(s,"%d", ip &  127);
+	result.append(s);
+	result.append(".");
+	sprintf(s,"%d", (ip &  ( 127 << 8)) >> 8);
+	result.append(s);
+	result.append(".");
+	sprintf(s,"%d", (ip &  ( 127 << 16 )) >> 16);
+	result.append(s);
+	result.append(".");
+	sprintf(s,"%d",  (ip & ( 127  << 24)) >> 24 );
+	result.append(s);
+	return result;
+}
+//if the users choices matchs the port number
+bool match(int port, int protocal)
+{
+	if( port == 80 && protocal == 1)
+		return true;
+	if( port == 21 && protocal == 2)
+		return true;
+	if( port == 20 && protocal == 2)
+		return true;
+	if( port == 23 && protocal == 3)
+		return true;
+
+	return false;
+}
  
 void processPacket(u_char* prot, const struct pcap_pkthdr* pkthdr, const u_char * packet)
 { 
@@ -44,68 +56,44 @@ void processPacket(u_char* prot, const struct pcap_pkthdr* pkthdr, const u_char 
     const struct sniff_ip *ip; /* The IP header */
     const struct sniff_tcp *tcp; /* The TCP header */
     const u_char *payload; /* Packet payload */
-   u_int size_ip;
+    u_int size_ip;
     u_int size_tcp; 
     ethernet = (const struct sniff_ethernet*)(packet);
     ip = (const struct sniff_ip*)(packet + SIZE_ETHERNET);
     size_ip = IP_HL(ip)*4;
+ //Invalid IP header length
     if (size_ip < 20) 
-    {
-//	printf("   * Invalid IP header length: %u bytes\n", size_ip);
 	return;
-    }
     tcp = (const struct sniff_tcp*)(packet + SIZE_ETHERNET + size_ip);
     size_tcp = TH_OFF(tcp)*4;
-  //  int ip_addr = ip_to_int ( ip->ip_src);
+//Invalid TCP header length
     if (size_tcp < 20) 
-    {
-//	printf("   * Invalid TCP header length: %u bytes\n", size_tcp);
 	return;
-    }
     payload = (packet + SIZE_ETHERNET + size_ip + size_tcp);
-
-    int i = 0;
-/*
-    0: undefined;
-    1: last source
-    2: last destination
-
-*/
-    int status = 0;
 
     if (*prot == 1 )
     {
 	if ( ntohs(tcp->th_sport) != 80 &&  ntohs(tcp->th_dport) != 80 )
-	{
-		printf("non http packet %u, %u\n",ntohs(tcp->th_sport),ntohs(tcp->th_dport));
 		return;	
-	}   
     }
     else if (*prot == 2 )
     {
 	if ( ntohs(tcp->th_sport) != 21 &&  ntohs(tcp->th_dport) != 21 && ntohs(tcp->th_sport) != 20 &&  ntohs(tcp->th_dport) != 20 )
-	{
-		printf("non ftp packet %u, %u\n",ntohs(tcp->th_sport),ntohs(tcp->th_dport));
 		return;	
-	}
     }
     else if (*prot == 3 )
     {
 	if ( ntohs(tcp->th_sport) != 23 &&  ntohs(tcp->th_dport) != 23 )
-	{
-		printf("non telnet packet %u, %u\n",ntohs(tcp->th_sport),ntohs(tcp->th_dport));
 		return;	
-	}   
     }
 
-//    printf("\n\n\nport %u, %u\n\n\n\n",ntohs(tcp->th_sport),ntohs(tcp->th_dport));
-
-    for (i=  SIZE_ETHERNET + size_ip + size_tcp; i < pkthdr->len; i++)
+// add the packet paylod into a has table, entry is set according to a pair {ip,port}
+    for (int i=  SIZE_ETHERNET + size_ip + size_tcp; i < pkthdr->len; i++)
     { 
 		map<pair<int,int>,string>::iterator it;
 	    	string s ;
 		int ip_addr;
-		if (ntohs(tcp->th_sport) == 80)
+		if ( match(ntohs(tcp->th_sport),*prot))
 		{
     			ip_addr =  ip->ip_src.s_addr;
 			if ( ! in_flow.count({ip_addr,ntohs(tcp->th_dport)}))
@@ -113,10 +101,18 @@ void processPacket(u_char* prot, const struct pcap_pkthdr* pkthdr, const u_char 
 			it = in_flow.find({ip_addr,ntohs(tcp->th_dport)});
 			s = it->second;
 			in_flow.erase({ip_addr,ntohs(tcp->th_dport)});
-			s.push_back(packet[i]);
+			if ( isprint(packet[i]))
+				s.push_back(packet[i]);
+			else
+			{	
+				char temp[5];
+				sprintf(temp," %d ",packet[i]);
+				s.append(temp);
+
+			}
 			in_flow.insert( { {ip_addr,ntohs(tcp->th_dport)},s });
 		}
-		else if (ntohs(tcp->th_dport) == 80)
+		else if (match(ntohs(tcp->th_dport),*prot))
 		{
     			ip_addr =  ip->ip_dst.s_addr;
 			if ( !out_flow.count({ip_addr,ntohs(tcp->th_sport)}))
@@ -124,7 +120,16 @@ void processPacket(u_char* prot, const struct pcap_pkthdr* pkthdr, const u_char 
 			it = out_flow.find({ip_addr,ntohs(tcp->th_sport)});
 			s = it->second;
 			out_flow.erase({ip_addr,ntohs(tcp->th_sport)});
-			s.push_back(packet[i]);
+			if ( isprint(packet[i]))
+			    s.push_back(packet[i]);
+			else
+			{	
+				char temp[5];
+				sprintf(temp,"%d",packet[i]);
+				s.append(temp);
+
+			}
+	
 			out_flow.insert( { {ip_addr,ntohs(tcp->th_sport)},s });
 		}
      } 
@@ -148,12 +153,11 @@ int main(int argc,char **argv)
     struct pcap_pkthdr header;
 //    printf("Enter your network trace file path: ");
 //    scanf("%s",trace_path);
-//     trace_path = "tfsession.pcap" ;
+//     char trace_path[] = "tfsession.pcap" ;
     char trace_path[] = "httpsession.pcap" ;
-//    printf("Choose the protocol you want to analyze\n ");
- //   printf("Enter 1 for http, Enter 2 for ftp, Enter 3 for telnet:\n");
-//    scanf("%d",&prot);
-    prot = 1;
+    printf("Choose the protocol you want to analyze\n ");
+   printf("Enter 1 for http, Enter 2 for ftp, Enter 3 for telnet:\n");
+    scanf("%d",&prot);
     pcap = pcap_open_offline(trace_path, errbuf);
     if (pcap == NULL)
     {
@@ -164,10 +168,28 @@ int main(int argc,char **argv)
     if ( pcap_loop(pcap, -1, processPacket,&prot) == -1){
         fprintf(stderr, "ERROR: %s\n", pcap_geterr(descr) );
  }
-
+    if (prot == 1)
+	cout << "Protocal HTTP:" << endl;
+    else if (prot == 2)
+	cout << "Protocal FTP:" << endl;
+    else if (prot == 3)
+	cout << "Protocal TELNET:" << endl;
+    cout << endl;
+    cout << endl;
+// Go through the hash map and output the combined payload from every entry.
     for(auto it = in_flow.begin(); it != in_flow.end(); it++)
+    {
+	cout << "From IP:" << ip_to_string(it->first.first) << "  To local port:" << it->first.second << ":" << endl;
 	cout << it->second << endl;
+        cout << endl;
+        cout << endl;
+    }
     for(auto it = out_flow.begin(); it != out_flow.end(); it++)
+    {
+	cout << "From local port:" << it->first.second << "  To IP::" << ip_to_string(it->first.first) <<":" <<endl;
 	cout << it->second << endl;
+        cout << endl;
+        cout << endl;
+    }
 
 }
