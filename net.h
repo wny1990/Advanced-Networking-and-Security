@@ -37,9 +37,11 @@
 		tcp_seq th_ack;		/* acknowledgement number */
 		u_char th_offx2;	/* data offset, rsvd */
 	#define TH_OFF(th)	(((th)->th_offx2 & 0xf0) >> 4)
+	#define TH_SYN(th)	(((th)->th_flags & 0x02) >> 1)
+	#define TH_FIN(th)	((th)->th_flags & 0x01)
 		u_char th_flags;
-	#define TH_FIN 0x01
-	#define TH_SYN 0x02
+//	#define TH_FIN 0x01
+//	#define TH_SYN 0x02
 	#define TH_RST 0x04
 	#define TH_PUSH 0x08
 	#define TH_ACK 0x10

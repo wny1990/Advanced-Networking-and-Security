@@ -14,8 +14,10 @@
 #include "net.h"
 #define SIZE_ETHERNET 14
 using namespace std;
-map<pair<int,int>,string> in_flow;
-map<pair<int,int>,string> out_flow;
+map<pair<int,int>,string> flow;
+// last = 1 response
+// last = 2 request
+map<pair<int,int>,int> last;
 //convert the ip address to a readable string
 string ip_to_string(int ip)
 {
@@ -87,21 +89,33 @@ void processPacket(u_char* prot, const struct pcap_pkthdr* pkthdr, const u_char 
 		return;	
     }
 
+
 // add the packet paylod into a has table, entry is set according to a pair {ip,port}
     for (int i=  SIZE_ETHERNET + size_ip + size_tcp; i < pkthdr->len; i++)
     { 
 		map<pair<int,int>,string>::iterator it;
-	    	string s ;
+	    	string s  = "";
 		int ip_addr;
 		if ( match(ntohs(tcp->th_sport),*prot))
 		{
     			ip_addr =  ip->ip_src.s_addr;
-			if ( ! in_flow.count({ip_addr,ntohs(tcp->th_dport)}))
-				in_flow.insert( { {ip_addr,ntohs(tcp->th_dport)},string() });
-			it = in_flow.find({ip_addr,ntohs(tcp->th_dport)});
-			s = it->second;
-			in_flow.erase({ip_addr,ntohs(tcp->th_dport)});
-			if ( isprint(packet[i]))
+			if ( ! flow.count({ip_addr,ntohs(tcp->th_dport)}))
+				flow.insert( { {ip_addr,ntohs(tcp->th_dport)},string() });
+			it = flow.find({ip_addr,ntohs(tcp->th_dport)});
+			s.append(it->second);
+			if ( i == SIZE_ETHERNET + size_ip + size_tcp)
+			{
+				if ( last.count({ip_addr,ntohs(tcp->th_dport)}))
+				{
+					auto ii =  last.find({ip_addr,ntohs(tcp->th_dport)});
+					if ( ii->second != 1)
+						s.append("\nResponse:\n");
+				}
+				else
+					s.append("\nResponse:\n");
+			}
+			flow.erase({ip_addr,ntohs(tcp->th_dport)});
+			if ( isprint(packet[i]) || packet[i] == '\n')
 				s.push_back(packet[i]);
 			else
 			{	
@@ -110,17 +124,32 @@ void processPacket(u_char* prot, const struct pcap_pkthdr* pkthdr, const u_char 
 				s.append(temp);
 
 			}
-			in_flow.insert( { {ip_addr,ntohs(tcp->th_dport)},s });
+			flow.insert( { {ip_addr,ntohs(tcp->th_dport)},s });
+			
+			if ( last.count({ip_addr,ntohs(tcp->th_dport)}))
+					last.erase({ip_addr,ntohs(tcp->th_dport)});
+			 last.insert({{ip_addr,ntohs(tcp->th_dport)},1});
 		}
 		else if (match(ntohs(tcp->th_dport),*prot))
 		{
     			ip_addr =  ip->ip_dst.s_addr;
-			if ( !out_flow.count({ip_addr,ntohs(tcp->th_sport)}))
-				out_flow.insert( { {ip_addr,ntohs(tcp->th_sport)},string() });
-			it = out_flow.find({ip_addr,ntohs(tcp->th_sport)});
-			s = it->second;
-			out_flow.erase({ip_addr,ntohs(tcp->th_sport)});
-			if ( isprint(packet[i]))
+			if ( !flow.count({ip_addr,ntohs(tcp->th_sport)}))
+				flow.insert( { {ip_addr,ntohs(tcp->th_sport)},string() });
+			it = flow.find({ip_addr,ntohs(tcp->th_sport)});
+			s.append(it->second);
+			if ( i == SIZE_ETHERNET + size_ip + size_tcp )
+			{
+				if ( last.count({ip_addr,ntohs(tcp->th_sport)}))
+				{
+					auto ii =  last.find({ip_addr,ntohs(tcp->th_sport)});
+					if ( ii->second != 2)
+						s.append("\nRequest:\n");
+				}
+				else
+					s.append("\nRequest:\n");
+			}
+			flow.erase({ip_addr,ntohs(tcp->th_sport)});
+			if ( isprint(packet[i]) || packet[i] == '\n')
 			    s.push_back(packet[i]);
 			else
 			{	
@@ -129,8 +158,11 @@ void processPacket(u_char* prot, const struct pcap_pkthdr* pkthdr, const u_char 
 				s.append(temp);
 
 			}
+			flow.insert( { {ip_addr,ntohs(tcp->th_sport)},s });
+			if ( last.count({ip_addr,ntohs(tcp->th_sport)}))
+					last.erase({ip_addr,ntohs(tcp->th_sport)});
+			 last.insert({{ip_addr,ntohs(tcp->th_sport)},2});
 	
-			out_flow.insert( { {ip_addr,ntohs(tcp->th_sport)},s });
 		}
      } 
 
@@ -151,12 +183,11 @@ int main(int argc,char **argv)
     pcap_t *pcap;
     unsigned char *packet;
     struct pcap_pkthdr header;
-//    printf("Enter your network trace file path: ");
-//    scanf("%s",trace_path);
-//     char trace_path[] = "tfsession.pcap" ;
-    char trace_path[] = "httpsession.pcap" ;
+    char trace_path[100];
+    printf("Enter your network trace file path: \n");
+    scanf("%s",trace_path);
     printf("Choose the protocol you want to analyze\n ");
-   printf("Enter 1 for http, Enter 2 for ftp, Enter 3 for telnet:\n");
+    printf("Enter 1 for http, Enter 2 for ftp, Enter 3 for telnet:\n");
     scanf("%d",&prot);
     pcap = pcap_open_offline(trace_path, errbuf);
     if (pcap == NULL)
@@ -177,16 +208,10 @@ int main(int argc,char **argv)
     cout << endl;
     cout << endl;
 // Go through the hash map and output the combined payload from every entry.
-    for(auto it = in_flow.begin(); it != in_flow.end(); it++)
+
+    for(auto it = flow.begin(); it != flow.end(); it++)
     {
-	cout << "From IP:" << ip_to_string(it->first.first) << "  To local port:" << it->first.second << ":" << endl;
-	cout << it->second << endl;
-        cout << endl;
-        cout << endl;
-    }
-    for(auto it = out_flow.begin(); it != out_flow.end(); it++)
-    {
-	cout << "From local port:" << it->first.second << "  To IP::" << ip_to_string(it->first.first) <<":" <<endl;
+	cout << "Session Between Server IP:" << ip_to_string(it->first.first) << " and  Local Client Port:" << it->first.second << ":" << endl;
 	cout << it->second << endl;
         cout << endl;
         cout << endl;
